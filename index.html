@@ -32,6 +32,11 @@ button:disabled{background:#94a3b8;cursor:not-allowed}
 .back-btn{margin-top:12px;background:linear-gradient(135deg,#6b7280,#374151)}
 @media(max-width:480px){.row{grid-template-columns:1fr;gap:6px}.value{text-align:left}.copy{width:100%;text-align:center}}
 </style>
+
+<!-- Firebase -->
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+
 </head>
 <body>
 
@@ -108,7 +113,7 @@ button:disabled{background:#94a3b8;cursor:not-allowed}
         </div>
 
         <div class="admin-box">
-            <div class="section-title">Last 20 Submitted UTRs</div>
+            <div class="section-title">Last Submitted UTRs</div>
             <div class="admin-list" id="utrList"></div>
         </div>
 
@@ -118,65 +123,100 @@ button:disabled{background:#94a3b8;cursor:not-allowed}
 </div>
 
 <script>
+// ----- Firebase Setup -----
+const firebaseConfig = {
+    apiKey: "YOUR_API_KEY",
+    authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+    projectId: "YOUR_PROJECT_ID",
+    storageBucket: "YOUR_PROJECT_ID.appspot.com",
+    messagingSenderId: "SENDER_ID",
+    appId: "APP_ID"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+
+// Admin credentials (basic front-end protection)
 const ADMIN_USER="Sami@12";
 const ADMIN_PASS="Saghir@786";
-let utrs=JSON.parse(localStorage.getItem("utrs")||"[]");
 
-// Default fallback values
-const defaultData = {amount:"₹ 8300", name:"Rupeeleap", upi:"paytm.s1xc6xh@pty"};
-
-// Load payment info from localStorage or defaults
+// Load payment info
 function loadPaymentInfo(){
-    let amt = localStorage.getItem("amount") || defaultData.amount;
-    let nm  = localStorage.getItem("name") || defaultData.name;
-    let up  = localStorage.getItem("upi") || defaultData.upi;
-
-    document.getElementById("amount").innerText = amt;
-    document.getElementById("name").innerText   = nm;
-    document.getElementById("upi").innerText    = up;
+    db.collection("paymentInfo").doc("current").get().then(doc=>{
+        if(doc.exists){
+            document.getElementById("amount").innerText = "₹ "+doc.data().amount;
+            document.getElementById("name").innerText = doc.data().name;
+            document.getElementById("upi").innerText = doc.data().upi;
+        } else {
+            db.collection("paymentInfo").doc("current").set({
+                amount: 8300,
+                name: "Rupeeleap",
+                upi: "paytm.s1xc6xh@pty"
+            }).then(()=>loadPaymentInfo());
+        }
+    });
 }
 loadPaymentInfo();
 
-function toggleSubmit(){document.getElementById("submitBtn").disabled = document.getElementById("utr").value.trim() === "";}
+// Listen for live updates
+db.collection("paymentInfo").doc("current").onSnapshot(doc=>{
+    if(doc.exists){
+        document.getElementById("amount").innerText = "₹ "+doc.data().amount;
+        document.getElementById("name").innerText = doc.data().name;
+        document.getElementById("upi").innerText = doc.data().upi;
+    }
+});
 
+// Toggle submit button
+function toggleSubmit(){document.getElementById("submitBtn").disabled = document.getElementById("utr").value.trim()==="";}
+
+// Submit UTR
 function submitPayment(){
-    let amt = parseInt(document.getElementById("amount").innerText.replace(/\D/g,''));
-    if(amt<1||amt>70000){alert("Amount must be 1–70000");return;}
-
-    let timestamp=new Date().toLocaleString();
-    utrs.unshift(timestamp + " : " + document.getElementById("utr").value.trim());
-    utrs=utrs.slice(0,20);
-    localStorage.setItem("utrs",JSON.stringify(utrs));
-
-    document.getElementById("mainPage").style.display="none";
-    document.getElementById("successPage").style.display="block";
+    const utrVal = document.getElementById("utr").value.trim();
+    if(!utrVal){alert("Enter UTR"); return;}
+    db.collection("utrs").add({
+        utr: utrVal,
+        timestamp: firebase.firestore.FieldValue.serverTimestamp()
+    }).then(()=>{
+        alert("UTR submitted successfully!");
+        document.getElementById("utr").value="";
+        document.getElementById("mainPage").style.display="none";
+        document.getElementById("successPage").style.display="block";
+    });
 }
 
+// Back to main
 function backHome(){
     document.getElementById("successPage").style.display="none";
     document.getElementById("mainPage").style.display="block";
-    document.getElementById("utr").value="";
-    document.getElementById("submitBtn").disabled=true;
+    document.getElementById("submitBtn").disabled = true;
 }
 
+// Admin panel
 function openAdmin(){
     document.getElementById("mainPage").style.display="none";
     document.getElementById("adminPanel").style.display="block";
 }
-
 function backToMainFromAdmin(){
     document.getElementById("adminPanel").style.display="none";
     document.getElementById("mainPage").style.display="block";
 }
 
+// Admin login
 function adminLogin(){
-    if(document.getElementById("adminUser").value===ADMIN_USER && document.getElementById("adminPass").value===ADMIN_PASS){
+    const user = document.getElementById("adminUser").value;
+    const pass = document.getElementById("adminPass").value;
+    if(user===ADMIN_USER && pass===ADMIN_PASS){
         document.getElementById("adminLoginBox").style.display="none";
         document.getElementById("adminDashboard").style.display="block";
 
-        document.getElementById("aAmount").value = parseInt(document.getElementById("amount").innerText.replace(/\D/g,''));
-        document.getElementById("aName").value = document.getElementById("name").innerText;
-        document.getElementById("aUpi").value = document.getElementById("upi").innerText;
+        // Load current payment info to admin inputs
+        db.collection("paymentInfo").doc("current").get().then(doc=>{
+            if(doc.exists){
+                document.getElementById("aAmount").value = doc.data().amount;
+                document.getElementById("aName").value = doc.data().name;
+                document.getElementById("aUpi").value = doc.data().upi;
+            }
+        });
 
         renderUTRs();
         document.getElementById("adminUser").value="";
@@ -184,30 +224,31 @@ function adminLogin(){
     } else alert("Access Denied");
 }
 
+// Save admin changes
 function saveAdmin(){
-    let amt = parseInt(document.getElementById("aAmount").value);
-    let nm  = document.getElementById("aName").value.trim();
-    let up  = document.getElementById("aUpi").value.trim();
-
-    if(amt<1||amt>70000){alert("Invalid amount");return;}
-    if(nm===""){alert("Name cannot be empty");return;}
-    if(up===""){alert("UPI cannot be empty");return;}
-
-    document.getElementById("amount").innerText = "₹ " + amt;
-    document.getElementById("name").innerText = nm;
-    document.getElementById("upi").innerText = up;
-
-    localStorage.setItem("amount","₹ "+amt);
-    localStorage.setItem("name",nm);
-    localStorage.setItem("upi",up);
-
-    alert("Payment info updated successfully!");
+    const amt = parseInt(document.getElementById("aAmount").value);
+    const nm = document.getElementById("aName").value.trim();
+    const up = document.getElementById("aUpi").value.trim();
+    if(!amt || !nm || !up){alert("All fields required"); return;}
+    db.collection("paymentInfo").doc("current").set({amount: amt, name: nm, upi: up})
+        .then(()=>alert("Payment info updated successfully!"));
 }
 
+// Render last 20 UTRs
 function renderUTRs(){
-    document.getElementById("utrList").innerHTML = utrs.length ? utrs.map((u,i)=>`<div>${i+1}. ${u}</div>`).join("") : "No submissions yet";
+    db.collection("utrs").orderBy("timestamp","desc").limit(20).get().then(snapshot=>{
+        const list = document.getElementById("utrList");
+        list.innerHTML="";
+        if(snapshot.empty) list.innerText="No submissions yet";
+        else snapshot.forEach((doc,i)=>{
+            const div = document.createElement("div");
+            div.innerText = (i+1)+". "+doc.data().utr+" ("+new Date(doc.data().timestamp?.toDate()).toLocaleString()+")";
+            list.appendChild(div);
+        });
+    });
 }
 
+// Logout
 function logout(){
     document.getElementById("adminDashboard").style.display="none";
     document.getElementById("adminLoginBox").style.display="block";
@@ -215,8 +256,8 @@ function logout(){
     document.getElementById("mainPage").style.display="block";
 }
 
+// Copy text
 function copyText(id){navigator.clipboard.writeText(document.getElementById(id).innerText);}
 </script>
-
 </body>
 </html>
